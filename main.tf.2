@@ -1,0 +1,117 @@
+# Define the required provider(s)
+provider "aws" {
+  region = "us-east-1"
+}
+
+# Define the Lambda function
+resource "aws_lambda_function" "my_lambda" {
+  function_name    = "my-lambda-function"
+  role             = aws_iam_role.my_role.arn
+  handler          = "index.handler"
+  runtime          = "nodejs14.x"
+  filename         = "lambda.zip"
+  source_code_hash = filebase64sha256("lambda.zip")
+}
+
+# Define the IAM role for the Lambda function
+resource "aws_iam_role" "my_role" {
+  name = "my-lambda-role"
+
+  assume_role_policy = <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "lambda.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+EOF
+}
+
+# Define the Lambda alias for Blue environment
+resource "aws_lambda_alias" "blue_alias" {
+  name             = "blue"
+  function_name    = aws_lambda_function.my_lambda.function_name
+  function_version = aws_lambda_function.my_lambda.version
+}
+
+# Define the Lambda alias for Green environment
+resource "aws_lambda_alias" "green_alias" {
+  name             = "green"
+  function_name    = aws_lambda_function.my_lambda.function_name
+  function_version = aws_lambda_function.my_lambda.version
+}
+
+# Define the CodeDeploy application
+resource "aws_codedeploy_app" "my_app" {
+  name     = "my-codedeploy-app"
+  compute_platform = "Lambda"
+}
+
+# Define the CodeDeploy deployment group for Blue environment
+resource "aws_codedeploy_deployment_group" "blue_deployment_group" {
+  app_name          = aws_codedeploy_app.my_app.name
+  deployment_group_name = "blue-deployment-group"
+  service_role_arn  = aws_iam_role.codedeploy_role.arn
+
+  blue_green_deployment_config {
+    deployment_ready_option {
+      action_on_timeout = "STOP_DEPLOYMENT"
+    }
+  }
+
+  auto_rollback_configuration {
+    enabled = true
+  }
+
+  deployment_style {
+    deployment_type = "BLUE_GREEN"
+    deployment_option = "WITH_TRAFFIC_CONTROL"
+  }
+
+  load_balancer_info {
+    target_group_info {
+      name = aws_lb_target_group.blue_target_group.name
+    }
+  }
+
+  trigger_configuration {
+    trigger_name    = "trigger"
+    trigger_target_arn = aws_lambda_alias.blue_alias.arn
+  }
+}
+
+# Define the CodeDeploy deployment group for Green environment
+resource "aws_codedeploy_deployment_group" "green_deployment_group" {
+  app_name          = aws_codedeploy_app.my_app.name
+  deployment_group_name = "green-deployment-group"
+  service_role_arn  = aws_iam_role.codedeploy_role.arn
+
+  blue_green_deployment_config {
+    deployment_ready_option {
+      action_on_timeout = "STOP_DEPLOYMENT"
+    }
+  }
+
+  auto_rollback_configuration {
+    enabled = true
+  }
+
+  deployment_style {
+    deployment_type = "BLUE_GREEN"
+    deployment_option = "WITH_TRAFFIC_CONTROL"
+  }
+
+  load_balancer_info {
+    target_group_info {
+      name = aws_lb_target_group.green_target_group.name
+    }
+  }
+
+  trigger
